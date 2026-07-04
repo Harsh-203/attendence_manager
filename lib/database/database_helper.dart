@@ -1,32 +1,14 @@
-// This is the MOST IMPORTANT backend file.
-// It creates the SQLite database, creates all tables,
-// and gives the rest of the app a single shared connection to talk to.
-
+import 'dart:io';
 import 'package:path/path.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class DatabaseHelper {
-  // SINGLETON SETUP
-  // "Singleton" = only ONE instance of this class exists in the whole app.
-
-  // Step 1: Create one private instance of this class (only this file can see it)
   static final DatabaseHelper _instance = DatabaseHelper._internal();
-
-  // Step 2: This is a private constructor (notice the underscore _internal)
-  // Nobody outside this file can do "DatabaseHelper()" directly
   DatabaseHelper._internal();
-
-  // Step 3: This factory always returns the SAME instance every time
-  // So anywhere in your app, DatabaseHelper() always gives back the same object
   factory DatabaseHelper() => _instance;
 
-  // This will hold our actual database connection once opened
   static Database? _database;
 
-  // GETTING THE DATABASE (opens it if not already open)
-
-  // Anywhere in the app, you call: await DatabaseHelper().database
-  // This checks: "Is the DB already open? If yes, reuse it. If no, open it."
   Future<Database> get database async {
     if (_database != null) {
       return _database!;
@@ -35,36 +17,36 @@ class DatabaseHelper {
     return _database!;
   }
 
-  // This actually creates/opens the database file on the device
   Future<Database> _initDatabase() async {
-    // Find the correct folder on the phone/emulator to store the database file
-    final String databasesPath = await getDatabasesPath();
+    // ------------------------------------------------------------
+    // DESKTOP SUPPORT (Windows/Linux/macOS) - FOR TESTING ONLY
+    // sqflite normally only works on Android/iOS. When running on
+    // desktop (like during our backend testing), we swap in the
+    // "ffi" version of sqflite instead. This does NOT affect the
+    // real Android/iOS app at all - this check is skipped entirely
+    // on phones, and normal sqflite behavior is used there.
+    // ------------------------------------------------------------
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
 
-    // Full path to our database file, e.g. ".../attendance_manager.db"
+    final String databasesPath = await getDatabasesPath();
     final String path = join(databasesPath, 'attendance_manager.db');
 
-    // Open the database (creates the file automatically if it doesn't exist)
     return await openDatabase(
       path,
-      version:
-          1, // Database version - increase this later if you change table structure
+      version: 1,
       onConfigure: _onConfigure,
       onCreate: _onCreate,
     );
   }
 
-  // ENABLE FOREIGN KEYS
-  // SQLite has foreign keys OFF by default - we must turn them ON manually
-
   Future<void> _onConfigure(Database db) async {
     await db.execute('PRAGMA foreign_keys = ON');
   }
 
-  // CREATE ALL TABLES
-  // This runs ONLY ONCE - the very first time the app opens the database
-
   Future<void> _onCreate(Database db, int version) async {
-    // TABLE 1: subjects
     await db.execute('''
       CREATE TABLE subjects (
         subject_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,7 +54,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // TABLE 2: teachers
     await db.execute('''
       CREATE TABLE teachers (
         teacher_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +66,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // TABLE 3: students
     await db.execute('''
       CREATE TABLE students (
         student_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +76,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // TABLE 4: attendance_sessions
     await db.execute('''
       CREATE TABLE attendance_sessions (
         session_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +89,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // TABLE 5: attendance_records
     await db.execute('''
       CREATE TABLE attendance_records (
         record_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,7 +101,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // Helpful indexes - these make searching/filtering faster as data grows
     await db.execute(
       'CREATE INDEX idx_sessions_teacher ON attendance_sessions (teacher_id)',
     );
@@ -135,7 +112,6 @@ class DatabaseHelper {
     );
   }
 
-  // CLOSE DATABASE (rarely needed, but good practice to have)
   Future<void> close() async {
     final db = _database;
     if (db != null) {
