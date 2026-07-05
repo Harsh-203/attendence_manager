@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import '../services/auth_service.dart'; 
-import '../models/teacher.dart'; 
+import '../services/auth_service.dart';
+import '../models/teacher.dart';
 import 'dashboard_screen.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key}); 
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -38,18 +39,6 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // login with admin/admin@123
-      if (teacherCode == "admin" && plainPassword == "admin@123") {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const DashboardScreen()),
-          );
-        }
-        return;
-      }
-
       final Teacher? teacher = await _authService.login(
         teacherCode,
         plainPassword,
@@ -61,7 +50,10 @@ class _LoginScreenState extends State<LoginScreen> {
         if (teacher != null) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const DashboardScreen()),
+            MaterialPageRoute(
+              builder: (context) =>
+                  DashboardScreen(teacherId: teacher.teacherId!),
+            ),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -112,7 +104,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 controller: _codeController,
                 decoration: InputDecoration(
                   labelText: "Teacher Code",
-                  //hintText: "Enter your teacher code",
                   prefixIcon: const Icon(Icons.badge),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -162,6 +153,18 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                     ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const RegisterScreen(),
+                    ),
+                  );
+                },
+                child: const Text("New teacher? Sign Up"),
+              ),
             ],
           ),
         ),

@@ -19,14 +19,6 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDatabase() async {
-    // ------------------------------------------------------------
-    // DESKTOP SUPPORT (Windows/Linux/macOS) - FOR TESTING ONLY
-    // sqflite normally only works on Android/iOS. When running on
-    // desktop (like during our backend testing), we swap in the
-    // "ffi" version of sqflite instead. This does NOT affect the
-    // real Android/iOS app at all - this check is skipped entirely
-    // on phones, and normal sqflite behavior is used there.
-    // ------------------------------------------------------------
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
       try {
         sqfliteFfiInit();
@@ -34,11 +26,8 @@ class DatabaseHelper {
         print('✅ Desktop FFI initialized');
       } catch (e) {
         print('❌ FFI init error: $e');
-        // Try fallback
         databaseFactory = databaseFactoryFfi;
       }
-      // sqfliteFfiInit();
-      // databaseFactory = databaseFactoryFfi;
     }
 
     final String databasesPath = await getDatabasesPath();
@@ -46,9 +35,10 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2, // bumped from 1 -> 2 for the duplicate-session fix
       onConfigure: _onConfigure,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -121,9 +111,52 @@ class DatabaseHelper {
       'CREATE INDEX idx_records_student ON attendance_records (student_id)',
     );
 
+    // Prevents more than ONE session per teacher+subject+date, ever.
+    await db.execute('''
+      CREATE UNIQUE INDEX idx_unique_teacher_subject_date
+      ON attendance_sessions (teacher_id, subject_id, session_date)
+    ''');
+
     await db.insert('subjects', {'subject_name': 'Mathematics'});
     await db.insert('subjects', {'subject_name': 'Physics'});
     await db.insert('subjects', {'subject_name': 'Chemistry'});
+  }
+
+  // Runs automatically once for anyone upgrading from version 1.
+  // Cleans up duplicate sessions already in your database, then locks
+  // in the uniqueness rule so it can't happen again.
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      print('🔧 Running migration: removing duplicate attendance sessions...');
+
+      await db.execute('''
+        DELETE FROM attendance_records
+        WHERE session_id IN (
+          SELECT session_id FROM attendance_sessions
+          WHERE session_id NOT IN (
+            SELECT MAX(session_id)
+            FROM attendance_sessions
+            GROUP BY teacher_id, subject_id, session_date
+          )
+        )
+      ''');
+
+      await db.execute('''
+        DELETE FROM attendance_sessions
+        WHERE session_id NOT IN (
+          SELECT MAX(session_id)
+          FROM attendance_sessions
+          GROUP BY teacher_id, subject_id, session_date
+        )
+      ''');
+
+      await db.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_teacher_subject_date
+        ON attendance_sessions (teacher_id, subject_id, session_date)
+      ''');
+
+      print('✅ Migration complete: duplicate sessions removed.');
+    }
   }
 
   Future<void> close() async {

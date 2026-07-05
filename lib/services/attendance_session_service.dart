@@ -4,18 +4,11 @@ import '../models/attendance_session.dart';
 class AttendanceSessionService {
   final DatabaseHelper _dbHelper = DatabaseHelper();
 
-  // ----------------- CREATE -----------------
-  // Creates a new session and returns its auto-generated session_id
-  // We need this returned ID immediately, because attendance records
-  // need to know WHICH session they belong to.
   Future<int> createSession(AttendanceSession session) async {
     final db = await _dbHelper.database;
     return await db.insert('attendance_sessions', session.toMap());
   }
 
-  // ----------------- READ -----------------
-
-  // Gets all sessions taken by one teacher (most recent first)
   Future<List<AttendanceSession>> getSessionsByTeacher(int teacherId) async {
     final db = await _dbHelper.database;
     final List<Map<String, dynamic>> maps = await db.query(
@@ -27,7 +20,15 @@ class AttendanceSessionService {
     return maps.map((map) => AttendanceSession.fromMap(map)).toList();
   }
 
-  // Gets one session by its ID
+  Future<List<AttendanceSession>> getAllSessions() async {
+    final db = await _dbHelper.database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'attendance_sessions',
+      orderBy: 'session_date DESC, session_time DESC',
+    );
+    return maps.map((map) => AttendanceSession.fromMap(map)).toList();
+  }
+
   Future<AttendanceSession?> getSessionById(int sessionId) async {
     final db = await _dbHelper.database;
     final List<Map<String, dynamic>> maps = await db.query(
@@ -39,8 +40,6 @@ class AttendanceSessionService {
     return AttendanceSession.fromMap(maps.first);
   }
 
-  // Checks if a teacher already took attendance on a specific date
-  // Useful to warn "You already submitted attendance today" on the UI side
   Future<List<AttendanceSession>> getSessionsByTeacherAndDate(
     int teacherId,
     String date,
@@ -54,8 +53,39 @@ class AttendanceSessionService {
     return maps.map((map) => AttendanceSession.fromMap(map)).toList();
   }
 
-  // ----------------- DELETE -----------------
-  // Deletes a session (rare - only if a teacher submitted by mistake)
+  // NEW: the key lookup for the fix. Finds the ONE session (if any) for
+  // this exact teacher+subject+date combination.
+  Future<AttendanceSession?> getSessionByTeacherSubjectDate(
+    int teacherId,
+    int subjectId,
+    String date,
+  ) async {
+    final db = await _dbHelper.database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'attendance_sessions',
+      where: 'teacher_id = ? AND subject_id = ? AND session_date = ?',
+      whereArgs: [teacherId, subjectId, date],
+    );
+    if (maps.isEmpty) return null;
+    return AttendanceSession.fromMap(maps.first);
+  }
+
+  // NEW: updates an existing session's timestamp when it's reused for a
+  // re-submission on the same day.
+  Future<int> touchSession(
+    int sessionId,
+    String sessionTime,
+    String createdAt,
+  ) async {
+    final db = await _dbHelper.database;
+    return await db.update(
+      'attendance_sessions',
+      {'session_time': sessionTime, 'created_at': createdAt},
+      where: 'session_id = ?',
+      whereArgs: [sessionId],
+    );
+  }
+
   Future<int> deleteSession(int sessionId) async {
     final db = await _dbHelper.database;
     return await db.delete(

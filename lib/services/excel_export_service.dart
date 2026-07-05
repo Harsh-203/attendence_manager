@@ -1,5 +1,3 @@
-// This file generates a downloadable Excel (.xlsx) file for one attendance session.
-
 import 'dart:io';
 import 'package:excel/excel.dart';
 import 'package:path_provider/path_provider.dart';
@@ -9,12 +7,8 @@ import '../repositories/attendance_repository.dart';
 class ExcelExportService {
   final AttendanceRepository _attendanceRepository = AttendanceRepository();
 
-  // ----------------- MAIN EXPORT METHOD -----------------
-
-  // Takes a sessionId, builds the Excel file, saves it, and returns the file
-  // so the UI can immediately open the Share sheet (WhatsApp/Email/Drive/etc.)
-  Future<File> exportSessionToExcel(int sessionId) async {
-    // Step 1: Get all the data we need using the repository we already built
+  // ----------------- BUILD THE EXCEL FILE -----------------
+  Future<File> _buildExcelFile(int sessionId) async {
     final sessionDetails = await _attendanceRepository.getSessionDetails(
       sessionId,
     );
@@ -25,16 +19,10 @@ class ExcelExportService {
     final String time = sessionDetails['time'];
     final List<Map<String, dynamic>> records = sessionDetails['records'];
 
-    // Step 2: Create a new Excel workbook
     final Excel excel = Excel.createExcel();
-
-    // Excel.createExcel() automatically creates a default sheet called "Sheet1"
     final Sheet sheet = excel['Attendance'];
-
-    // Remove the default empty "Sheet1" so we're only left with our named sheet
     excel.delete('Sheet1');
 
-    // Step 3: Add the header row (column titles)
     sheet.appendRow([
       TextCellValue('Student Name'),
       TextCellValue('Attendance Status'),
@@ -44,11 +32,10 @@ class ExcelExportService {
       TextCellValue('Subject'),
     ]);
 
-    // Step 4: Add one row per student
     for (final record in records) {
       sheet.appendRow([
         TextCellValue(record['studentName'] as String),
-        TextCellValue(record['status'] as String), // "Present" or "Absent"
+        TextCellValue(record['status'] as String),
         TextCellValue(date),
         TextCellValue(time),
         TextCellValue(teacherName),
@@ -56,43 +43,95 @@ class ExcelExportService {
       ]);
     }
 
-    // Step 5: Save the file to the app's document folder
-    final Directory directory = await getApplicationDocumentsDirectory();
-
-    // Build a unique, readable file name, e.g. "Attendance_Maths_2026-07-04.xlsx"
     final String safeSubjectName = subjectName.replaceAll(' ', '_');
     final String fileName = 'Attendance_${safeSubjectName}_$date.xlsx';
-    final String filePath = '${directory.path}/$fileName';
 
-    // Step 6: Encode the Excel data into actual file bytes and write to disk
     final List<int>? fileBytes = excel.encode();
     if (fileBytes == null) {
       throw Exception('Failed to generate Excel file bytes');
     }
 
-    final File file = File(filePath);
-    await file.writeAsBytes(fileBytes);
+    final Directory tempDirectory = await getApplicationDocumentsDirectory();
+    final String tempPath = '${tempDirectory.path}/$fileName';
+    final File tempFile = File(tempPath);
+    await tempFile.writeAsBytes(fileBytes);
 
-    return file;
+    return tempFile;
   }
 
-  // ----------------- SHARE / DOWNLOAD -----------------
+  // Reliably finds the real Downloads folder on Windows.
+  // path_provider's getDownloadsDirectory() is known to return an
+  // incorrect/garbled path on Windows (a confirmed Flutter bug), so
+  // we build the path manually from the Windows user profile instead.
+  Directory _getWindowsDownloadsDirectory() {
+    final String? userProfile = Platform.environment['USERPROFILE'];
+    if (userProfile == null) {
+      throw Exception('Could not determine Windows user profile folder');
+    }
+    return Directory('$userProfile\\Downloads');
+  }
 
-  // Opens the native Share sheet so the teacher can save/send the file
-  // (WhatsApp, Email, Google Drive, Bluetooth, "Save to Files", etc.)
+  // ----------------- MAIN EXPORT METHOD -----------------
+  Future<String> exportAttendance(int sessionId) async {
+    final File builtFile = await _buildExcelFile(sessionId);
+    final String fileName = builtFile.path.split(Platform.pathSeparator).last;
+
+    if (Platform.isWindows) {
+      final Directory downloadsDirectory = _getWindowsDownloadsDirectory();
+
+      // Make sure the folder actually exists before writing into it
+      if (!await downloadsDirectory.exists()) {
+        await downloadsDirectory.create(recursive: true);
+      }
+
+      final String finalPath = '${downloadsDirectory.path}\\$fileName';
+      final File finalFile = await builtFile.copy(finalPath);
+
+      // Open File Explorer with the file highlighted
+      await Process.run('explorer.exe', ['/select,', finalFile.path]);
+
+      return finalFile.path;
+    } else if (Platform.isMacOS || Platform.isLinux) {
+      final Directory? downloadsDirectory = await getDownloadsDirectory();
+      final Directory targetDirectory =
+          downloadsDirectory ?? await getApplicationDocumentsDirectory();
+
+      if (!await targetDirectory.exists()) {
+        await targetDirectory.create(recursive: true);
+      }
+
+      final String finalPath =
+          '${targetDirectory.path}${Platform.pathSeparator}$fileName';
+      final File finalFile = await builtFile.copy(finalPath);
+
+      if (Platform.isMacOS) {
+        await Process.run('open', ['-R', finalFile.path]);
+      } else {
+        await Process.run('xdg-open', [targetDirectory.path]);
+      }
+
+      return finalFile.path;
+    } else {
+      // ----- MOBILE: use the native Share sheet -----
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(builtFile.path)], text: 'Attendance Report'),
+      );
+      return builtFile.path;
+    }
+  }
+
+  // Kept for backward compatibility
+  Future<File> exportSessionToExcel(int sessionId) async {
+    return await _buildExcelFile(sessionId);
+  }
+
   Future<void> shareExcelFile(File file) async {
     await SharePlus.instance.share(
       ShareParams(files: [XFile(file.path)], text: 'Attendance Report'),
     );
   }
 
-  // ----------------- CONVENIENCE METHOD -----------------
-
-  // Does both steps in one call - export AND immediately open the share sheet.
-  // This is likely the ONE method your UI teammate will call after
-  // AttendanceRepository().submitAttendance() succeeds.
   Future<void> exportAndShare(int sessionId) async {
-    final file = await exportSessionToExcel(sessionId);
-    await shareExcelFile(file);
+    await exportAttendance(sessionId);
   }
 }

@@ -1,25 +1,28 @@
-// dashboard_screen.dart - SIMPLIFIED with hardcoded subjects
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/attendance_provider.dart';
+import '../services/teacher_service.dart';
+import '../services/subject_service.dart';
+import '../services/excel_export_service.dart';
 import 'calendar_history_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final int teacherId;
+
+  const DashboardScreen({super.key, required this.teacherId});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  // entered  subjects
-  final List<Map<String, dynamic>> _subjects = [
-    {'id': '1', 'name': 'subject 1'},
-    {'id': '2', 'name': 'subject 2'},
-    {'id': '3', 'name': 'subject 3'},
-  ];
+  final TeacherService _teacherService = TeacherService();
+  final SubjectService _subjectService = SubjectService();
+  final ExcelExportService _excelExportService = ExcelExportService();
 
-  String _selectedSubjectId = '1';
+  String _teacherName = '';
+  String _subjectName = '';
+  bool _isLoadingTeacherInfo = true;
 
   String _formatDate(DateTime date) {
     final months = [
@@ -45,7 +48,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Provider.of<AttendanceProvider>(context, listen: false).fetchStudents();
+      _loadTeacherInfo();
     });
+  }
+
+  Future<void> _loadTeacherInfo() async {
+    try {
+      final teacher = await _teacherService.getTeacherById(widget.teacherId);
+      if (teacher != null) {
+        final subject = await _subjectService.getSubjectById(teacher.subjectId);
+        if (mounted) {
+          setState(() {
+            _teacherName = teacher.name;
+            _subjectName = subject?.subjectName ?? 'Unknown Subject';
+            _isLoadingTeacherInfo = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _teacherName = 'Unknown Teacher';
+            _subjectName = 'Unknown Subject';
+            _isLoadingTeacherInfo = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading teacher info: $e');
+      if (mounted) {
+        setState(() => _isLoadingTeacherInfo = false);
+      }
+    }
   }
 
   Future<void> _showAddStudentDialog() async {
@@ -108,23 +141,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
-            onPressed: () {
+            onPressed: () async {
               if (formKey.currentState!.validate()) {
                 final name = nameController.text.trim();
                 final roll = rollController.text.trim();
 
-                Provider.of<AttendanceProvider>(
+                await Provider.of<AttendanceProvider>(
                   context,
                   listen: false,
                 ).addStudentManually(name, roll);
 
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    backgroundColor: Colors.green,
-                    content: Text('Student added!'),
-                  ),
-                );
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      backgroundColor: Colors.green,
+                      content: Text('Student added!'),
+                    ),
+                  );
+                }
               }
             },
             child: const Text('Add Student'),
@@ -132,6 +167,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _confirmDeleteStudent(int studentId, String studentName) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Student?'),
+        content: Text(
+          'Are you sure you want to remove $studentName from the active list? '
+          'Their past attendance records will NOT be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      try {
+        await Provider.of<AttendanceProvider>(
+          context,
+          listen: false,
+        ).deleteStudent(studentId);
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.green,
+              content: Text('$studentName removed'),
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(backgroundColor: Colors.red, content: Text('Error: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  // Asks the teacher if they want to export the Excel file right now.
+  // On desktop this saves straight into Downloads; on mobile it opens
+  // the native Share sheet (handled inside ExcelExportService).
+  Future<void> _promptExcelExport(int sessionId) async {
+    final bool? shouldExport = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Export Attendance?'),
+        content: const Text(
+          'Attendance was saved. Do you want to generate an Excel file now?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not Now'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Export to Excel',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldExport == true) {
+      try {
+        final String savedPath = await _excelExportService.exportAttendance(
+          sessionId,
+        );
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.green,
+              content: Text('Excel file saved: $savedPath'),
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.red,
+              content: Text('Excel export failed: $e'),
+            ),
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -162,14 +301,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
-      body: attendanceProv.isLoading
+      body: attendanceProv.isLoading || _isLoadingTeacherInfo
           ? const Center(child: CircularProgressIndicator(color: Colors.teal))
           : Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  //subject dropdown
+                  // Teacher + Subject info card
                   Card(
                     elevation: 2,
                     shape: RoundedRectangleBorder(
@@ -179,28 +318,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       padding: const EdgeInsets.all(12),
                       child: Row(
                         children: [
-                          const Icon(Icons.book, color: Colors.teal),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Subject:',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
+                          const Icon(Icons.person, color: Colors.teal),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: DropdownButton<String>(
-                              value: _selectedSubjectId,
-                              isExpanded: true,
-                              items: _subjects.map((subject) {
-                                return DropdownMenuItem<String>(
-                                  value: subject['id'].toString(),
-                                  child: Text(subject['name']),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                setState(() {
-                                  _selectedSubjectId = value!;
-                                });
-                              },
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _teacherName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                Text(
+                                  _subjectName,
+                                  style: TextStyle(
+                                    color: Colors.grey.shade600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
@@ -367,19 +505,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       student.studentId.toString(),
                                     );
                                   },
-                                  secondary: CircleAvatar(
-                                    backgroundColor: isChecked
-                                        ? Colors.green.shade100
-                                        : Colors.grey.shade200,
-                                    child: Icon(
-                                      isChecked
-                                          ? Icons.check
-                                          : Icons.person_outline,
-                                      color: isChecked
-                                          ? Colors.green
-                                          : Colors.grey.shade600,
-                                      size: 20,
-                                    ),
+                                  secondary: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      CircleAvatar(
+                                        backgroundColor: isChecked
+                                            ? Colors.green.shade100
+                                            : Colors.grey.shade200,
+                                        child: Icon(
+                                          isChecked
+                                              ? Icons.check
+                                              : Icons.person_outline,
+                                          color: isChecked
+                                              ? Colors.green
+                                              : Colors.grey.shade600,
+                                          size: 20,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.red,
+                                        ),
+                                        tooltip: 'Delete student',
+                                        onPressed: () => _confirmDeleteStudent(
+                                          student.studentId!,
+                                          student.name,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               );
@@ -406,13 +560,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ? null
                           : () async {
                               try {
-                                await attendanceProv.saveCurrentSession(
-                                  subjectId:
-                                      _selectedSubjectId,
-                                  teacherId: "1",
-                                );
+                                final sessionId = await attendanceProv
+                                    .saveCurrentSession(
+                                      subjectId: '',
+                                      teacherId: widget.teacherId.toString(),
+                                    );
 
-                                if (mounted) {
+                                if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
                                       backgroundColor: Colors.green,
@@ -422,9 +576,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     ),
                                   );
                                   await attendanceProv.fetchStudents();
+
+                                  if (context.mounted) {
+                                    await _promptExcelExport(sessionId);
+                                  }
                                 }
                               } catch (e) {
-                                if (mounted) {
+                                if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       backgroundColor: Colors.red,

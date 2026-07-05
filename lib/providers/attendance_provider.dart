@@ -1,16 +1,13 @@
-// attendance_provider.dart - COMPLETE FIXED
 import 'package:flutter/material.dart';
 import '../models/student.dart';
-import '../models/attendance_record.dart';
-import '../models/attendance_session.dart';
 import '../services/student_service.dart';
-import '../services/attendance_record_service.dart';
 import '../services/attendance_session_service.dart';
+import '../repositories/attendance_repository.dart';
 
 class AttendanceProvider extends ChangeNotifier {
   final StudentService _studentService = StudentService();
-  final AttendanceRecordService _recordService = AttendanceRecordService();
   final AttendanceSessionService _sessionService = AttendanceSessionService();
+  final AttendanceRepository _attendanceRepository = AttendanceRepository();
 
   List<Student> _students = [];
   List<Student> get students => _students;
@@ -18,24 +15,19 @@ class AttendanceProvider extends ChangeNotifier {
   Map<String, bool> _uiChecklist = {};
   Map<String, bool> get uiChecklist => _uiChecklist;
 
-  Map<String, List<Map<String, dynamic>>> _historyWithNames = {};
-  Map<String, List<Map<String, dynamic>>> get historyWithNames => _historyWithNames;
-
-  Map<String, List<AttendanceRecord>> _historyLogs = {};
-  Map<String, List<AttendanceRecord>> get historyLogs => _historyLogs;
+  final Map<String, List<Map<String, dynamic>>> _historyWithNames = {};
+  Map<String, List<Map<String, dynamic>>> get historyWithNames =>
+      _historyWithNames;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
-
-  List<Map<String, dynamic>> _submittedAttendance = [];
-  List<Map<String, dynamic>> get submittedAttendance => _submittedAttendance;
 
   Future<void> fetchStudents() async {
     _isLoading = true;
     notifyListeners();
 
     try {
-      _students = await _studentService.getAllStudents();
+      _students = await _studentService.getActiveStudents();
       _uiChecklist = {};
       for (var student in _students) {
         _uiChecklist[student.studentId.toString()] = false;
@@ -50,20 +42,30 @@ class AttendanceProvider extends ChangeNotifier {
     }
   }
 
-  void addStudentManually(String name, String rollNumber) {
-    final int newId = DateTime.now().millisecondsSinceEpoch % 1000000;
-    
-    final newStudent = Student(
-      studentId: newId,
-      name: name,
-      rollNumber: rollNumber,
-      isActive: true,
-      createdAt: DateTime.now().toIso8601String(),
-    );
-    
-    _students.add(newStudent);
-    _uiChecklist[newStudent.studentId.toString()] = false;
-    notifyListeners();
+  Future<void> addStudentManually(String name, String rollNumber) async {
+    try {
+      final newStudent = Student(
+        name: name,
+        rollNumber: rollNumber,
+        createdAt: DateTime.now().toIso8601String(),
+      );
+
+      await _studentService.addStudent(newStudent);
+      await fetchStudents();
+    } catch (e) {
+      debugPrint("Error adding student: $e");
+      rethrow;
+    }
+  }
+
+  Future<void> deleteStudent(int studentId) async {
+    try {
+      await _studentService.softDeleteStudent(studentId);
+      await fetchStudents();
+    } catch (e) {
+      debugPrint("Error deleting student: $e");
+      rethrow;
+    }
   }
 
   void toggleAttendance(String studentId) {
@@ -74,7 +76,6 @@ class AttendanceProvider extends ChangeNotifier {
   }
 
   String getStudentName(int studentId) {
-    // try finding name in students list
     for (var student in _students) {
       if (student.studentId == studentId) {
         return student.name;
@@ -83,87 +84,63 @@ class AttendanceProvider extends ChangeNotifier {
     return 'Unknown Student';
   }
 
-  Future<void> saveCurrentSession({
+  // ----------------- SUBMIT ATTENDANCE -----------------
+  // NOW RETURNS the new sessionId, so the UI can immediately trigger
+  // Excel export right after a successful submit.
+  Future<int> saveCurrentSession({
     required String subjectId,
     required String teacherId,
   }) async {
     try {
-      final now = DateTime.now();
-      String todayStr = now.toString().split(' ')[0];
-      String timeStr = "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}";
+      final int parsedTeacherId = int.parse(teacherId);
 
-      final int sessionId = DateTime.now().millisecondsSinceEpoch;
-
-      final List<Map<String, dynamic>> recordsWithNames = [];
-      
-      for (var entry in _uiChecklist.entries) {
-        final studentId = int.parse(entry.key);
-        // Find the student
-        Student? student;
-        for (var s in _students) {
-          if (s.studentId == studentId) {
-            student = s;
-            break;
-          }
-        }
-        
-        final String studentName = student?.name ?? 'Unknown Student';
-        final String rollNumber = student?.rollNumber ?? 'N/A';
-        
-        recordsWithNames.add({
-          'studentId': entry.key,
-          'name': studentName,
-          'rollNumber': rollNumber,
-          'status': entry.value ? 'Present' : 'Absent',
-        });
-      }
-
-      // Save to memory
-      final attendanceData = {
-        'sessionId': sessionId,
-        'date': todayStr,
-        'time': timeStr,
-        'subjectId': subjectId,
-        'teacherId': teacherId,
-        'records': recordsWithNames,
+      final Map<int, bool> attendanceMap = {
+        for (var entry in _uiChecklist.entries)
+          int.parse(entry.key): entry.value,
       };
 
-      _submittedAttendance.add(attendanceData);
-       // store history
-      if (!_historyWithNames.containsKey(todayStr)) {
-        _historyWithNames[todayStr] = [];
-      }
-      _historyWithNames[todayStr]!.addAll(recordsWithNames);
-      
-      if (!_historyLogs.containsKey(todayStr)) {
-        _historyLogs[todayStr] = [];
-      }
-      for (var entry in _uiChecklist.entries) {
-        final record = AttendanceRecord(
-          sessionId: sessionId,
-          studentId: int.parse(entry.key),
-          status: entry.value ? AttendanceStatus.present : AttendanceStatus.absent,
-        );
-        _historyLogs[todayStr]!.add(record);
-      }
+      final sessionId = await _attendanceRepository.submitAttendance(
+        teacherId: parsedTeacherId,
+        attendanceMap: attendanceMap,
+      );
 
-      // Reset checklist
       for (var key in _uiChecklist.keys) {
         _uiChecklist[key] = false;
       }
 
       notifyListeners();
-      
-      print('Attendance saved! Records: ${recordsWithNames.length}');
-      
+      debugPrint('Attendance saved to database! Session ID: $sessionId');
+
+      return sessionId;
     } catch (e) {
-      print('Error saving attendance: $e');
+      debugPrint('Error saving attendance: $e');
       rethrow;
     }
   }
 
   Future<void> loadHistory() async {
     try {
+      final sessions = await _sessionService.getAllSessions();
+      _historyWithNames.clear();
+
+      for (final session in sessions) {
+        final details = await _attendanceRepository.getSessionDetails(
+          session.sessionId!,
+        );
+        final records = details['records'] as List<dynamic>;
+
+        final mappedRecords = records.map((r) {
+          return {
+            'name': r['studentName'],
+            'rollNumber': r['rollNumber'],
+            'status': r['status'],
+          };
+        }).toList();
+
+        _historyWithNames.putIfAbsent(session.sessionDate, () => []);
+        _historyWithNames[session.sessionDate]!.addAll(mappedRecords);
+      }
+
       notifyListeners();
     } catch (e) {
       debugPrint("Error loading history: $e");
