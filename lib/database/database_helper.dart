@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class DatabaseHelper {
@@ -27,8 +28,17 @@ class DatabaseHelper {
     // on phones, and normal sqflite behavior is used there.
     // ------------------------------------------------------------
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
+      try {
+        sqfliteFfiInit();
+        databaseFactory = databaseFactoryFfi;
+        print('✅ Desktop FFI initialized');
+      } catch (e) {
+        print('❌ FFI init error: $e');
+        // Try fallback
+        databaseFactory = databaseFactoryFfi;
+      }
+      // sqfliteFfiInit();
+      // databaseFactory = databaseFactoryFfi;
     }
 
     final String databasesPath = await getDatabasesPath();
@@ -110,6 +120,10 @@ class DatabaseHelper {
     await db.execute(
       'CREATE INDEX idx_records_student ON attendance_records (student_id)',
     );
+
+    await db.insert('subjects', {'subject_name': 'Mathematics'});
+    await db.insert('subjects', {'subject_name': 'Physics'});
+    await db.insert('subjects', {'subject_name': 'Chemistry'});
   }
 
   Future<void> close() async {
