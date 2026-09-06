@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:path/path.dart' as p;
+import '../database/database_helper.dart';
 import 'package:excel/excel.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -17,6 +19,9 @@ class ExcelExportService {
     final String subjectName = sessionDetails['subjectName'];
     final String date = sessionDetails['date'];
     final String time = sessionDetails['time'];
+    final db = await DatabaseHelper().database;
+    final sessions = await db.query('attendance_sessions', where: 'session_id = ?', whereArgs: [sessionId]);
+    final topic = sessions.first['topic'] as String;
     final List<Map<String, dynamic>> records = sessionDetails['records'];
 
     final Excel excel = Excel.createExcel();
@@ -25,6 +30,7 @@ class ExcelExportService {
 
     sheet.appendRow([
       TextCellValue('Student Name'),
+      TextCellValue('Topic'),
       TextCellValue('Attendance Status'),
       TextCellValue('Date'),
       TextCellValue('Time'),
@@ -35,6 +41,7 @@ class ExcelExportService {
     for (final record in records) {
       sheet.appendRow([
         TextCellValue(record['studentName'] as String),
+        TextCellValue(topic),
         TextCellValue(record['status'] as String),
         TextCellValue(date),
         TextCellValue(time),
@@ -43,8 +50,8 @@ class ExcelExportService {
       ]);
     }
 
-    final String safeSubjectName = subjectName.replaceAll(' ', '_');
-    final String fileName = 'Attendance_${safeSubjectName}_$date.xlsx';
+    final String safeSubjectName = subjectName.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    final String fileName = 'Attendance_${safeSubjectName}_${date}_$sessionId.xlsx';
 
     final List<int>? fileBytes = excel.encode();
     if (fileBytes == null) {
@@ -74,7 +81,7 @@ class ExcelExportService {
   // ----------------- MAIN EXPORT METHOD -----------------
   Future<String> exportAttendance(int sessionId) async {
     final File builtFile = await _buildExcelFile(sessionId);
-    final String fileName = builtFile.path.split(Platform.pathSeparator).last;
+    final String fileName = p.basename(builtFile.path);
 
     if (Platform.isWindows) {
       final Directory downloadsDirectory = _getWindowsDownloadsDirectory();

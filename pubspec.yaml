@@ -43,6 +43,7 @@ dependencies:
   share_plus: ^13.2.0
   sqflite_common_ffi: ^2.4.0+3
   provider: ^6.1.2
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

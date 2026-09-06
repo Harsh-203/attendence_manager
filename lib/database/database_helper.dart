@@ -32,10 +32,11 @@ class DatabaseHelper {
 
     final String databasesPath = await getDatabasesPath();
     final String path = join(databasesPath, 'attendance_manager.db');
+    print('📂 Database is located at: $path');
 
     return await openDatabase(
       path,
-      version: 2, // bumped from 1 -> 2 for the duplicate-session fix
+      version: 3, // bumped from 1 -> 2 for the duplicate-session fix
       onConfigure: _onConfigure,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
@@ -71,6 +72,9 @@ class DatabaseHelper {
         student_id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         roll_number TEXT NOT NULL UNIQUE,
+        course TEXT NOT NULL DEFAULT '',
+        academic_year TEXT NOT NULL DEFAULT '',
+        contact TEXT NOT NULL DEFAULT '',
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL
       )
@@ -83,6 +87,7 @@ class DatabaseHelper {
         subject_id INTEGER NOT NULL,
         session_date TEXT NOT NULL,
         session_time TEXT NOT NULL,
+        topic TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         FOREIGN KEY (teacher_id) REFERENCES teachers (teacher_id),
         FOREIGN KEY (subject_id) REFERENCES subjects (subject_id)
@@ -126,6 +131,13 @@ class DatabaseHelper {
   // Cleans up duplicate sessions already in your database, then locks
   // in the uniqueness rule so it can't happen again.
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 3) {
+      await db.execute("ALTER TABLE students ADD COLUMN course TEXT NOT NULL DEFAULT ''");
+      await db.execute("ALTER TABLE students ADD COLUMN academic_year TEXT NOT NULL DEFAULT ''");
+      await db.execute("ALTER TABLE students ADD COLUMN contact TEXT NOT NULL DEFAULT ''");
+      await db.execute("ALTER TABLE attendance_sessions ADD COLUMN topic TEXT NOT NULL DEFAULT ''");
+    }
+
     if (oldVersion < 2) {
       print('🔧 Running migration: removing duplicate attendance sessions...');
 

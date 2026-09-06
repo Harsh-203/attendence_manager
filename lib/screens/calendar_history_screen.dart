@@ -136,7 +136,6 @@ class _CalendarHistoryScreenState extends State<CalendarHistoryScreen> {
                       final record = dailyRecords[index];
                       final isPresent = record['status'] == 'Present';
                       final studentName = record['name'] ?? 'Unknown Student';
-                      final rollNumber = record['rollNumber'] ?? 'N/A';
                       
                       return Card(
                         margin: const EdgeInsets.only(bottom: 8),
@@ -159,10 +158,6 @@ class _CalendarHistoryScreenState extends State<CalendarHistoryScreen> {
                           title: Text(
                             studentName,
                             style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          subtitle: Text(
-                            'Roll: $rollNumber',
-                            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                           ),
                           trailing: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
